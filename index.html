@@ -44,11 +44,6 @@
         <li id="chk-arm"><span class="dot"></span><span class="txt">投げる腕（肩・肘・手首）</span></li>
         <li id="chk-fps"><span class="dot"></span><span class="txt">処理速度</span></li>
       </ul>
-      <div id="focus" class="focus" hidden>
-        <div class="focus-k">今回の課題</div>
-        <div class="focus-t" id="focus-title"></div>
-        <div class="focus-c" id="focus-cue"></div>
-      </div>
       <p class="hint">投げる位置に立ち、顔と投げる腕の肘までが映るようにタブレットの向きを調整してください。スタートを押すと準備時間のあと、合図に合わせて1投ずつ投げます。</p>
       <button id="btn-start" class="primary big" disabled>スタート</button>
       <button id="btn-cam" class="ghost" hidden>カメラを開始</button>
@@ -82,10 +77,22 @@
   </div>
 </section>
 
+<section id="scr-confirm" class="screen">
+  <header class="bar">
+    <h1>認識の確認</h1>
+    <div class="bar-actions">
+      <button id="btn-confirm-back" class="ghost">位置入力へ戻る</button>
+      <button id="btn-confirm-ok" class="primary">この内容で解析する</button>
+    </div>
+  </header>
+  <div id="confirm" class="scroll"></div>
+</section>
+
 <section id="scr-result" class="screen">
   <header class="bar">
     <h1>解析結果</h1>
     <div class="bar-actions">
+      <button id="btn-recheck" class="ghost">認識を直す</button>
       <button id="btn-discard" class="ghost">保存しない</button>
       <button id="btn-save" class="primary">保存して次へ</button>
     </div>
@@ -114,7 +121,14 @@
     <label>準備時間（秒）<input id="set-prep" type="number" min="3" max="30" step="1" inputmode="numeric"></label>
     <label>1投の時間（秒）<input id="set-throw" type="number" min="3" max="15" step="1" inputmode="numeric"></label>
     <label>カメラ
-      <select id="set-facing"><option value="user">前面（画面側）</option><option value="environment">背面</option></select>
+      <select id="set-camera"></select>
+    </label>
+    <label>カメラの画質
+      <select id="set-quality">
+        <option value="auto">自動（フルHDまで・おすすめ）</option>
+        <option value="fps">コマ数を優先</option>
+        <option value="max">カメラの最高解像度</option>
+      </select>
     </label>
     <label>姿勢モデル
       <select id="set-model"><option value="full">標準（精度優先）</option><option value="lite">軽量（速度優先）</option></select>
@@ -124,7 +138,7 @@
     </label>
     <label class="check"><input id="set-sound" type="checkbox"> 合図の音を鳴らす</label>
     <label class="check"><input id="set-voice" type="checkbox"> 音声で読み上げる</label>
-    <p class="hint">身長は、画面上の長さをcmに換算するために使います（前腕の長さを身長から推定します）。</p>
+    <p class="hint">カメラの欄には、いま認識できているカメラだけが出ます。外付けカメラはつなぐと自動で追加されます。身長は、画面上の長さをcmに換算するために使います。</p>
     <div class="row end">
       <button value="cancel" class="ghost">閉じる</button>
       <button id="btn-settings-save" value="ok" class="primary">保存</button>

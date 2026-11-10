@@ -1,6 +1,8 @@
 // Result and history screens.
 import { METRICS, SKILLS, gradeOf, landingSummary, historyStats, historyFindings } from './analysis.js';
 import { drawBoard, drawHits, fitView, hitText, THROW_COLORS } from './board.js';
+import { armRegion, drawRegion, toCanvas } from './frames.js';
+import { comparePlayer } from './compare.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const fin = Number.isFinite;
@@ -238,20 +240,19 @@ function metricsTable(analysis) {
   return card;
 }
 
-async function drawKeyframe(canvas, frames, index, view, crop, mark) {
-  let i = index;
-  for (let d = 0; d < 6 && !(frames[i] && frames[i].img); d++) i = Math.min(frames.length - 1, index + (d % 2 ? -1 : 1) * Math.ceil((d + 1) / 2));
-  const blob = frames[i] && frames[i].img;
+async function drawKeyframe(canvas, frames, index, sub, mark) {
+  let i = -1;
+  for (let d = 0; d < 8 && i < 0; d++) {
+    for (const j of [index - d, index + d]) if (frames[j] && frames[j].img && frames[j].crop) { i = j; break; }
+  }
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (!blob) return;
-  const bmp = await createImageBitmap(blob);
-  const s = bmp.width / view.w;
-  ctx.drawImage(bmp, crop.x * s, crop.y * s, crop.size * s, crop.size * s, 0, 0, canvas.width, canvas.height);
+  if (i < 0) return;
+  const bmp = await createImageBitmap(frames[i].img);
+  drawRegion(ctx, { bmp, crop: frames[i].crop }, sub);
   bmp.close();
-  const k = canvas.width / crop.size;
-  const X = (x) => (x - crop.x) * k, Y = (y) => (y - crop.y) * k;
+  const { X, Y, k } = toCanvas(sub, canvas);
   ctx.setLineDash([10, 8]);
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#ffd34a';
@@ -273,15 +274,14 @@ function keyframes(analysis, frames, view) {
   const card = h('div', 'card');
   card.append(h('h3', null, '3つの瞬間（黄色の点線＝構えた時の手首の位置）'));
   const L = analysis.forearmPx;
-  const size = Math.min(2.7 * L, view.w, view.h);
+  const sub = armRegion(analysis, view, 2.7, 0.38);
   const jobs = [];
   for (const t of analysis.throws) {
     const title = h('div', 'kf-title');
     const chip = h('i', 'chip');
     chip.style.background = THROW_COLORS[(t.n - 1) % 3];
-    title.append(chip, document.createTextNode(`${t.n}投目`));
+    title.append(chip, document.createTextNode(`${t.n}投目${t.edited ? '（位置を手で修正）' : ''}`));
     card.append(title);
-    const crop = { size, x: Math.max(0, Math.min(view.w - size, analysis.face.x - size / 2)), y: Math.max(0, Math.min(view.h - size, analysis.face.y - 0.38 * size)) };
     const side = (v) => `${v >= 0 ? '右目側' : '左目側'}へ${f1(Math.abs(v))}cm`;
     const shots = [
       { idx: t.iReady, cap: '構え', mark: { x: t.px.ready.wx, y: t.px.ready.wy, color: '#36d3c4' } },
@@ -296,16 +296,22 @@ function keyframes(analysis, frames, view) {
       cv.height = 360;
       cell.append(cv, h('div', 'kf-cap', sh.cap));
       row.append(cell);
-      jobs.push(drawKeyframe(cv, frames, sh.idx, view, crop, { ...sh.mark, lineX: t.px.ready.wx, r: 0.22 * L }).catch(() => {}));
+      jobs.push(drawKeyframe(cv, frames, sh.idx, sub, { ...sh.mark, lineX: t.px.ready.wx, r: 0.22 * L }).catch(() => {}));
     }
     card.append(row);
   }
   return { card, done: Promise.all(jobs) };
 }
 
+/** Stops players and frees decoded pictures of a rendered result. */
+export function disposeResult(root) {
+  for (const el of root.querySelectorAll('.card')) if (typeof el.dispose === 'function') el.dispose();
+  root.replaceChildren();
+}
+
 export function renderResult(root, data) {
   const { analysis, hits, findings, frames, view, score, coach, review, history } = data;
-  root.replaceChildren();
+  disposeResult(root);
   const land = landingSummary(hits);
   if (coach && (coach.focus || review)) root.append(coachCard(coach, review));
   if (score) root.append(scoreCard(score, history || []));
@@ -327,7 +333,8 @@ export function renderResult(root, data) {
   root.append(two);
   let done = Promise.resolve();
   if (analysis.throws.length) {
-    if (frames && frames.some((f) => f.img)) {
+    if (frames && frames.some((f) => f.img && f.crop)) {
+      root.append(comparePlayer(analysis, frames, view));
       const kf = keyframes(analysis, frames, view);
       root.append(kf.card);
       done = kf.done;

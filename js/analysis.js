@@ -112,31 +112,49 @@ function findThrows(S, L, maxThrows) {
 function measureThrow(S, L, c) {
   const p = c.p;
   const tp = S.t[p];
-  let R = between(S, tp - 0.45, tp - 0.25);
-  if (R.length < 2) R = between(S, tp - 0.65, tp - 0.2);
-  const Wt = between(S, tp - 0.7, tp - 0.25);
+  // While the player waits, the forearm stands upright and has its normal length. Frames where the
+  // tracker put the wrist somewhere else (for example on the elbow) fail this test and are left out.
+  const upright = (i) => {
+    const d = Math.hypot(S.wx[i] - S.ex[i], S.wy[i] - S.ey[i]);
+    return fin(d) && d > 0.65 * L && d < 1.45 * L && S.ey[i] - S.wy[i] > 0.45 * L;
+  };
+  const good = (idx) => { const g = idx.filter(upright); return g.length >= Math.max(2, idx.length * 0.4) ? g : idx; };
+  let R0 = between(S, tp - 0.45, tp - 0.25);
+  if (R0.length < 2) R0 = between(S, tp - 0.65, tp - 0.2);
+  const Wt0 = between(S, tp - 0.7, tp - 0.25);
+  const R = good(R0);
+  const Wt = good(Wt0.length ? Wt0 : R0);
+  const quality = Wt0.length ? Wt0.filter(upright).length / Wt0.length : 0;
   // Last frame before the swing: walking back from the peak, the first frame where the hand
   // has not yet risen above its waiting height (works the same at any frame rate).
   const waitY = median(pick(S, 'wy', R));
+  const lastR = R0[R0.length - 1];
   let pre = R[R.length - 1];
-  for (let i = p - 1; i > R[R.length - 1]; i--) {
-    if (fin(S.wy[i]) && waitY - S.wy[i] <= 0.12 * L) { pre = i; break; }
+  for (let i = p - 1; i > lastR; i--) {
+    if (upright(i) && waitY - S.wy[i] <= 0.12 * L) { pre = i; break; }
   }
   const m = (k, idx) => median(pick(S, k, idx));
   const ready = { wx: m('wx', R), wy: m('wy', R), ex: m('ex', R), ey: m('ey', R), sx: m('sx', R), sy: m('sy', R), ox: m('ox', R), oy: m('oy', R) };
-  const face = { x: m('fx', Wt.length ? Wt : R), y: m('fy', Wt.length ? Wt : R), nx: m('nx', Wt.length ? Wt : R) };
-  const Sw = [];
-  for (let i = pre; i <= p; i++) Sw.push(i);
+  const face = { x: m('fx', Wt), y: m('fy', Wt), nx: m('nx', Wt) };
   let swingDx = 0;
-  for (const i of Sw) { const d = ready.wx - S.wx[i]; if (fin(d) && Math.abs(d) > Math.abs(swingDx)) swingDx = d; }
+  for (let i = pre; i <= p; i++) { const d = ready.wx - S.wx[i]; if (fin(d) && Math.abs(d) > Math.abs(swingDx)) swingDx = d; }
   const A = between(S, tp - 0.1, tp + 0.35);
   const eys = pick(S, 'ey', A).filter(fin).sort((x, y) => x - y);
   const eMin = eys.length > 2 ? eys[1] : eys.length ? eys[0] : NaN;
   const near = between(S, tp - 1.0, tp + 0.3);
   const fps = near.length > 1 ? (near.length - 1) / (S.t[near[near.length - 1]] - S.t[near[0]]) : NaN;
   const pathIdx = between(S, tp - 0.8, tp + 0.2);
+  // Moment used to line throws up against each other: the rising hand passes halfway between its
+  // waiting height and its highest point. The hand moves fastest there, so the crossing can be
+  // timed more finely than the frame interval (the highest point itself is flat and vague).
+  const halfY = (waitY + S.wy[p]) / 2;
+  let tSync = tp;
+  for (let i = p; i > lastR && i > 0; i--) {
+    const a = S.wy[i - 1], b = S.wy[i];
+    if (fin(a) && fin(b) && a >= halfY && b < halfY) { tSync = S.t[i - 1] + (S.t[i] - S.t[i - 1]) * (a - halfY) / (a - b); break; }
+  }
   return {
-    tPeak: tp, iPeak: p, iPre: pre, iReady: R[Math.floor(R.length / 2)], fps,
+    tPeak: tp, tSync, iPeak: p, iPre: pre, iReady: R[Math.floor(R.length / 2)], fps, quality,
     px: {
       ready, face, forearm: L,
       pre: { wx: S.wx[pre], wy: S.wy[pre], ex: S.ex[pre], ey: S.ey[pre] },
@@ -200,15 +218,40 @@ export function analyzeCapture(frames, opts) {
   if (!fin(L0) || L0 < 8) return result;
   const found = findThrows(S, L0, opts.throws ?? 3).map((c) => measureThrow(S, L0, c));
   if (!found.length) return result;
-  const Lr = median(found.map((th) => Math.hypot(th.px.ready.wx - th.px.ready.ex, th.px.ready.wy - th.px.ready.ey)));
+  return finalize(result, found.map((th, k) => ({ n: k + 1, ...th })), opts);
+}
+
+// Scale (cm per pixel), face reference and the metrics, from the key positions of each throw.
+function finalize(result, throws, opts) {
+  const Lr = median(throws.map((th) => Math.hypot(th.px.ready.wx - th.px.ready.ex, th.px.ready.wy - th.px.ready.ey)));
   const cm = opts.forearmCm / Lr;
-  result.cmPerPx = cm;
-  result.forearmPx = Lr;
   // One face reference for the whole capture: the face landmarks are noisy while the hand covers the face.
-  const face = { x: median(found.map((th) => th.px.face.x)), y: median(found.map((th) => th.px.face.y)) };
-  result.face = face;
-  result.throws = found.map((th, k) => ({ n: k + 1, ...th, m: toMetrics(th, cm, handed, face, found[0].px.ready) }));
-  return result;
+  const face = { x: median(throws.map((th) => th.px.face.x)), y: median(throws.map((th) => th.px.face.y)) };
+  const first = throws[0].px.ready;
+  return { ...result, cmPerPx: cm, forearmPx: Lr, face, throws: throws.map((th) => ({ ...th, m: toMetrics(th, cm, result.handed, face, first) })) };
+}
+
+/**
+ * Re-measure after the player has checked or corrected the key positions by hand.
+ * cells: [{ n, edited, ready: {idx, wx, wy, ex, ey, sx, sy}, pre: {idx, wx, wy, ex, ey}, top: {idx, wx, wy, ex, ey} }]
+ */
+export function applyKeyframes(analysis, cells, opts) {
+  const throws = analysis.throws.map((t) => {
+    const c = cells.find((x) => x.n === t.n);
+    if (!c || !c.edited) return t;
+    const take = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k]]));
+    const px = {
+      ...t.px,
+      ready: { ...t.px.ready, ...take(c.ready, ['wx', 'wy', 'ex', 'ey', 'sx', 'sy']) },
+      pre: { ...t.px.pre, ...take(c.pre, ['wx', 'wy', 'ex', 'ey']) },
+      top: { ...t.px.top, ...take(c.top, ['wx', 'wy', 'ex', 'ey']) },
+    };
+    const d1 = px.ready.wx - px.pre.wx, d2 = px.ready.wx - px.top.wx;
+    px.swingDx = Math.abs(d2) > Math.abs(d1) ? d2 : d1;
+    if (fin(px.top.ey)) px.elbowMinY = fin(t.px.elbowMinY) ? Math.min(t.px.elbowMinY, px.top.ey) : px.top.ey;
+    return { ...t, px, iReady: c.ready.idx, iPre: c.pre.idx, iPeak: c.top.idx, edited: true };
+  });
+  return finalize(analysis, throws, opts);
 }
 
 // ---------- wording ----------
@@ -244,7 +287,9 @@ export function makeFindings(analysis, hits, history = []) {
     return out;
   }
   if (T.length < 3) out.push({ level: 'warn', title: `検出できた投球は${T.length}投です`, detail: '合図から5秒以内に投げ終わっているか、腕がカメラの外に出ていないかを確認してください。' });
-  if (analysis.fps < 14) out.push({ level: 'warn', title: `処理速度が遅めです（毎秒${r1(analysis.fps)}コマ）`, detail: '速い動きの数値は粗くなります。設定で「軽量モデル」を試してください。' });
+  const shaky = T.filter((t) => !t.edited && t.quality < 0.7).map((t) => t.n);
+  if (shaky.length) out.push({ level: 'warn', title: `${shaky.join('・')}投目は手首の認識が不安定でした`, detail: '構えている間に、手首の位置がずれて認識されたコマが多くありました。数値がおかしい時は、確認画面で手首・肘の位置を直してください。' });
+    if (analysis.fps < 14) out.push({ level: 'warn', title: `処理速度が遅めです（毎秒${r1(analysis.fps)}コマ）`, detail: '速い動きの数値は粗くなります。設定で「軽量モデル」を試してください。' });
 
   const land = landingSummary(hits);
   if (land) {

@@ -1,7 +1,8 @@
 // Settings and round history, kept in this browser only.
 const KEY = 'dartsform.v1';
 
-export const DEFAULTS = { handed: 'left', heightCm: 170, prepSec: 8, throwSec: 5, facing: 'user', model: 'full', delegate: 'GPU', sound: true, voice: true };
+// cameraId '' means "the built-in camera on the screen side"; camQuality is auto | fps | max.
+export const DEFAULTS = { handed: 'left', heightCm: 170, prepSec: 8, throwSec: 5, cameraId: '', cameraLabel: '', camQuality: 'auto', model: 'full', delegate: 'GPU', sound: true, voice: true };
 
 function read() {
   try {
