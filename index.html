@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ダーツフォーム解析</title>
+<meta name="theme-color" content="#12161e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="errbar" hidden></div>
+
+<section id="scr-home" class="screen active">
+  <header class="bar">
+    <h1>ダーツフォーム解析</h1>
+    <div class="bar-actions">
+      <button id="btn-history" class="ghost">履歴</button>
+      <button id="btn-settings" class="ghost">設定</button>
+    </div>
+  </header>
+  <div class="home-grid">
+    <div class="stage" id="stage">
+      <video id="cam" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <div id="stage-msg" class="stage-msg">カメラを準備しています…</div>
+      <div id="cap" class="cap" hidden>
+        <div id="cap-label" class="cap-label"></div>
+        <div id="cap-big" class="cap-big"></div>
+        <div id="cap-sub" class="cap-sub"></div>
+        <div class="cap-bar"><div id="cap-fill"></div></div>
+        <button id="btn-cancel" class="ghost cap-cancel">中止</button>
+      </div>
+    </div>
+    <div class="side">
+      <ul class="checks">
+        <li id="chk-cam"><span class="dot"></span><span class="txt">カメラ</span></li>
+        <li id="chk-model"><span class="dot"></span><span class="txt">姿勢モデル</span></li>
+        <li id="chk-pose"><span class="dot"></span><span class="txt">体の検出</span></li>
+        <li id="chk-arm"><span class="dot"></span><span class="txt">投げる腕（肩・肘・手首）</span></li>
+        <li id="chk-fps"><span class="dot"></span><span class="txt">処理速度</span></li>
+      </ul>
+      <p class="hint">投げる位置に立ち、顔と投げる腕の肘までが映るようにタブレットの向きを調整してください。スタートを押すと準備時間のあと、合図に合わせて1投ずつ投げます。</p>
+      <button id="btn-start" class="primary big" disabled>スタート</button>
+      <button id="btn-cam" class="ghost" hidden>カメラを開始</button>
+    </div>
+  </div>
+</section>
+
+<section id="scr-board" class="screen">
+  <header class="bar">
+    <h1>刺さった位置をタップ</h1>
+    <div class="bar-actions"><button id="btn-board-back" class="ghost">やり直す</button></div>
+  </header>
+  <div class="board-grid">
+    <div id="board-wrap" class="board-wrap"></div>
+    <div class="side">
+      <p class="hint" id="board-hint">1投目から順に、刺さった場所をタップしてください。置いた印はドラッグで動かせます。</p>
+      <ol id="hit-list" class="hit-list"></ol>
+      <div class="row">
+        <button id="btn-undo" class="ghost">1つ戻す</button>
+        <button id="btn-miss" class="ghost">刺さらなかった</button>
+      </div>
+      <button id="btn-decide" class="primary big" disabled>決定</button>
+    </div>
+  </div>
+</section>
+
+<section id="scr-result" class="screen">
+  <header class="bar">
+    <h1>解析結果</h1>
+    <div class="bar-actions">
+      <button id="btn-discard" class="ghost">保存しない</button>
+      <button id="btn-save" class="primary">保存して次へ</button>
+    </div>
+  </header>
+  <div id="result" class="scroll"></div>
+</section>
+
+<section id="scr-history" class="screen">
+  <header class="bar">
+    <h1>履歴と傾向</h1>
+    <div class="bar-actions">
+      <button id="btn-export" class="ghost">データを書き出す</button>
+      <button id="btn-history-back" class="primary">戻る</button>
+    </div>
+  </header>
+  <div id="history" class="scroll"></div>
+</section>
+
+<dialog id="dlg-settings">
+  <form method="dialog" class="settings">
+    <h2>設定</h2>
+    <label>利き手
+      <select id="set-handed"><option value="left">左</option><option value="right">右</option></select>
+    </label>
+    <label>身長（cm）<input id="set-height" type="number" min="120" max="220" step="1" inputmode="numeric"></label>
+    <label>準備時間（秒）<input id="set-prep" type="number" min="3" max="30" step="1" inputmode="numeric"></label>
+    <label>1投の時間（秒）<input id="set-throw" type="number" min="3" max="15" step="1" inputmode="numeric"></label>
+    <label>カメラ
+      <select id="set-facing"><option value="user">前面（画面側）</option><option value="environment">背面</option></select>
+    </label>
+    <label>姿勢モデル
+      <select id="set-model"><option value="full">標準（精度優先）</option><option value="lite">軽量（速度優先）</option></select>
+    </label>
+    <label>処理方式
+      <select id="set-delegate"><option value="GPU">自動（GPU優先）</option><option value="CPU">CPUのみ</option></select>
+    </label>
+    <label class="check"><input id="set-sound" type="checkbox"> 合図の音を鳴らす</label>
+    <label class="check"><input id="set-voice" type="checkbox"> 音声で読み上げる</label>
+    <p class="hint">身長は、画面上の長さをcmに換算するために使います（前腕の長さを身長から推定します）。</p>
+    <div class="row end">
+      <button value="cancel" class="ghost">閉じる</button>
+      <button id="btn-settings-save" value="ok" class="primary">保存</button>
+    </div>
+    <p class="ver" id="ver"></p>
+  </form>
+</dialog>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
