@@ -1,11 +1,11 @@
 // App flow: camera preview -> timed capture of three throws -> board input -> analysis -> history.
 import { initPose, detect, poseInfo } from './pose.js';
-import { analyzeCapture, makeFindings, LM } from './analysis.js';
+import { analyzeCapture, makeFindings, scoreRound, coachRound, reviewFocus, LM } from './analysis.js';
 import { BoardInput, hitText } from './board.js';
 import { renderResult, renderHistory } from './report.js';
-import { loadSettings, saveSettings, loadHistory, addSession, clearHistory, forearmCm, exportJson } from './store.js';
+import { loadSettings, saveSettings, loadHistory, addSession, clearHistory, loadFocus, saveFocus, forearmCm, exportJson } from './store.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const THROWS = 3;
 const $ = (id) => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
@@ -250,7 +250,8 @@ async function startCapture() {
   const win = Math.max(2, state.settings.throwSec) * 1000;
   const start = performance.now();
   const t0 = start + prep;
-  state.cap = { start, t0, win, recStart: t0 - 1000, end: t0 + THROWS * win + 700, step: -99 };
+  const fc = loadFocus();
+  state.cap = { start, t0, win, recStart: t0 - 1000, end: t0 + THROWS * win + 700, step: -99, focus: fc && fc.key !== 'keep' ? fc.title : null };
   state.frames = [];
   state.notice = null;
   message('');
@@ -271,7 +272,7 @@ function captureTick() {
     cap.classList.remove('go');
     $('cap-label').textContent = '準備';
     $('cap-big').textContent = left;
-    $('cap-sub').textContent = '投げる位置で構えてください';
+    $('cap-sub').textContent = c.focus ? `課題：${c.focus}` : '投げる位置で構えてください';
     $('cap-fill').style.transform = `scaleX(${(c.t0 - now) / (c.t0 - c.start)})`;
     if (left <= 3 && c.step !== -left) { c.step = -left; beep(520, 0.12); }
   } else if (now < c.t0 + THROWS * c.win) {
@@ -338,7 +339,7 @@ function openBoard() {
     $('btn-miss').disabled = hits.length >= THROWS;
     const n = state.analysis ? state.analysis.throws.length : 0;
     $('board-hint').textContent = hits.length < THROWS
-      ? `${hits.length + 1}投目が刺さった場所をタップしてください。置いた印はドラッグで動かせます。${n < THROWS ? `（検出できた投球は${n}投です）` : ''}`
+      ? `${hits.length + 1}投目が刺さった場所をタップしてください。置いた印はドラッグで動かせます。近くに刺さった時は、2本指でつまむか「＋」で拡大できます。${n < THROWS ? `（検出できた投球は${n}投です）` : ''}`
       : '3本とも入力できました。よければ「決定」を押してください。';
   });
   state.board.refresh();
@@ -347,10 +348,23 @@ function openBoard() {
 
 async function decide() {
   const hits = state.hits.slice(0, THROWS);
-  const findings = makeFindings(state.analysis, hits, loadHistory());
+  const history = loadHistory();
+  const findings = makeFindings(state.analysis, hits, history);
+  const score = scoreRound(state.analysis, hits);
+  const coach = coachRound(state.analysis, hits, score);
+  const review = reviewFocus(loadFocus(), state.analysis, hits, score);
+  state.round = { score, coach, review };
   show('result');
   $('result').scrollTop = 0;
-  await renderResult($('result'), { analysis: state.analysis, hits, findings, frames: state.frames, view: state.view });
+  await renderResult($('result'), { analysis: state.analysis, hits, findings, frames: state.frames, view: state.view, score, coach, review, history });
+}
+
+function renderFocus() {
+  const f = loadFocus();
+  $('focus').hidden = !f;
+  if (!f) return;
+  $('focus-title').textContent = f.title;
+  $('focus-cue').textContent = f.cue;
 }
 
 function round1(o) {
@@ -372,15 +386,20 @@ function saveRound() {
     fps: Math.round(a.fps * 10) / 10,
     pose: poseInfo(),
     hits: state.hits.slice(0, THROWS),
+    score: state.round ? state.round.score : null,
+    focus: state.round && state.round.coach.focus ? { key: state.round.coach.focus.key, title: state.round.coach.focus.title } : null,
     throws: a.throws.map((t) => ({ n: t.n, tPeak: Math.round(t.tPeak * 100) / 100, m: round1(t.m), ready: round1(t.px.ready), pre: round1(t.px.pre), top: round1(t.px.top) })),
   });
   if (!ok) showError('履歴を保存できませんでした（ブラウザの保存領域が使えません）');
+  if (state.round && state.round.coach.focus) saveFocus(state.round.coach.focus);
   backHome();
 }
 
 function backHome() {
   state.frames = [];
   state.analysis = null;
+  state.round = null;
+  renderFocus();
   show('home');
 }
 
@@ -425,7 +444,7 @@ function applySettings() {
 
 function openHistory() {
   renderHistory($('history'), loadHistory(), () => {
-    if (window.confirm('保存した履歴をすべて消します。よろしいですか？')) { clearHistory(); openHistory(); }
+    if (window.confirm('保存した履歴をすべて消します。よろしいですか？')) { clearHistory(); renderFocus(); openHistory(); }
   });
   show('history');
 }
@@ -443,6 +462,9 @@ $('btn-export').addEventListener('click', exportJson);
 $('btn-undo').addEventListener('click', () => state.board && state.board.undo());
 $('btn-miss').addEventListener('click', () => state.board && state.board.miss());
 $('btn-decide').addEventListener('click', decide);
+$('btn-zoom-in').addEventListener('click', () => state.board && state.board.zoomIn());
+$('btn-zoom-out').addEventListener('click', () => state.board && state.board.zoomOut());
+$('btn-zoom-reset').addEventListener('click', () => state.board && state.board.resetView());
 $('btn-board-back').addEventListener('click', backHome);
 $('btn-save').addEventListener('click', saveRound);
 $('btn-discard').addEventListener('click', backHome);
@@ -454,6 +476,7 @@ document.addEventListener('visibilitychange', () => {
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
+renderFocus();
 setInterval(statusTick, 400);
 schedule();
 startCamera();

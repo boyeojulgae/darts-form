@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Nothing may leave the device: the page can only talk to its own files. This also blocks the usage log that the MediaPipe library would otherwise send. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob: mediastream:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'">
 <title>ダーツフォーム解析</title>
 <meta name="theme-color" content="#12161e">
 <link rel="manifest" href="manifest.webmanifest">
@@ -42,6 +44,11 @@
         <li id="chk-arm"><span class="dot"></span><span class="txt">投げる腕（肩・肘・手首）</span></li>
         <li id="chk-fps"><span class="dot"></span><span class="txt">処理速度</span></li>
       </ul>
+      <div id="focus" class="focus" hidden>
+        <div class="focus-k">今回の課題</div>
+        <div class="focus-t" id="focus-title"></div>
+        <div class="focus-c" id="focus-cue"></div>
+      </div>
       <p class="hint">投げる位置に立ち、顔と投げる腕の肘までが映るようにタブレットの向きを調整してください。スタートを押すと準備時間のあと、合図に合わせて1投ずつ投げます。</p>
       <button id="btn-start" class="primary big" disabled>スタート</button>
       <button id="btn-cam" class="ghost" hidden>カメラを開始</button>
@@ -55,7 +62,14 @@
     <div class="bar-actions"><button id="btn-board-back" class="ghost">やり直す</button></div>
   </header>
   <div class="board-grid">
-    <div id="board-wrap" class="board-wrap"></div>
+    <div class="board-wrap">
+      <div id="board-wrap" class="board-svg"></div>
+      <div class="zoom">
+        <button id="btn-zoom-in" aria-label="拡大">＋</button>
+        <button id="btn-zoom-out" aria-label="縮小">−</button>
+        <button id="btn-zoom-reset">全体</button>
+      </div>
+    </div>
     <div class="side">
       <p class="hint" id="board-hint">1投目から順に、刺さった場所をタップしてください。置いた印はドラッグで動かせます。</p>
       <ol id="hit-list" class="hit-list"></ol>

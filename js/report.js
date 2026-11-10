@@ -1,6 +1,6 @@
 // Result and history screens.
-import { METRICS, landingSummary, historyStats, historyFindings } from './analysis.js';
-import { drawBoard, drawHits, hitText, THROW_COLORS } from './board.js';
+import { METRICS, SKILLS, gradeOf, landingSummary, historyStats, historyFindings } from './analysis.js';
+import { drawBoard, drawHits, fitView, hitText, THROW_COLORS } from './board.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const fin = Number.isFinite;
@@ -52,9 +52,121 @@ function boardCard(title, hits, opts) {
   const wrap = h('div');
   wrap.style.maxWidth = '420px';
   wrap.style.margin = '0 auto';
-  const { marks } = drawBoard(wrap);
-  drawHits(marks, hits, opts);
+  const { svg, marks } = drawBoard(wrap);
+  if (opts && opts.fit) {
+    const half = fitView(svg, marks, hits);
+    if (half < 230) card.append(h('p', 'note', 'ダーツが見やすいように、ブル周辺を拡大して表示しています。'));
+  } else {
+    drawHits(marks, hits, opts);
+  }
+  card.insertBefore(wrap, card.children[1] || null);
+  return card;
+}
+
+function skillBars(skills, avg) {
+  const box = h('div', 'skills');
+  for (const def of SKILLS) {
+    const v = skills[def.key];
+    const row = h('div', 'skill');
+    row.append(h('div', null, def.label));
+    const track = h('div', 'track');
+    const fill = h('div', `fill ${v == null ? '' : v >= 80 ? '' : v >= 60 ? 'mid' : 'low'}`);
+    fill.style.width = `${v == null ? 0 : Math.max(3, v)}%`;
+    track.append(fill);
+    const val = h('div', 'val', v == null ? '—' : `${v} `);
+    if (v != null) {
+      val.append(h('small', null, gradeOf(v)));
+      const a = avg && avg[def.key];
+      if (fin(a) && Math.abs(v - a) >= 3) val.append(h('span', v > a ? 'up' : 'down', v > a ? ' ↑' : ' ↓'));
+    }
+    row.append(track, val);
+    box.append(row);
+  }
+  return box;
+}
+
+function pastScores(history) {
+  const rows = history.filter((x) => x.score && fin(x.score.total));
+  const totals = rows.map((x) => x.score.total);
+  const avg = {};
+  for (const def of SKILLS) {
+    const vals = rows.map((x) => x.score.skills && x.score.skills[def.key]).filter(fin);
+    avg[def.key] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN;
+  }
+  return { n: totals.length, totals, best: totals.length ? Math.max(...totals) : NaN, mean: totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : NaN, avg };
+}
+
+function scoreCard(score, history) {
+  const card = h('div', 'card');
+  card.append(h('h3', null, 'スコア'));
+  const wrap = h('div', 'score');
+  const left = h('div');
+  const main = h('div', 'score-main');
+  main.append(h('div', 'score-num', score.total == null ? '—' : String(score.total)), h('div', 'score-grade', score.grade || ''));
+  left.append(main);
+  const past = pastScores(history);
+  const sub = h('div', 'score-sub');
+  if (past.n && score.total != null) {
+    const d = Math.round(score.total - past.mean);
+    sub.append(document.createTextNode(`これまでの平均 ${Math.round(past.mean)}点（`), h('span', d >= 0 ? 'up' : 'down', `${d >= 0 ? '+' : ''}${d}`), document.createTextNode(`）・最高 ${Math.round(past.best)}点`));
+    if (score.total > past.best) sub.append(h('span', 'best', '自己ベスト'));
+  } else {
+    sub.textContent = '100点満点。保存していくと、平均や自己ベストと比べられます。';
+  }
+  left.append(sub);
+  wrap.append(left, skillBars(score.skills, past.n ? past.avg : null));
   card.append(wrap);
+  card.append(h('p', 'note', '着弾（正確さ・グルーピング）40%、フォーム5項目60%で計算した目安です。矢印はこれまでの平均との比較です。'));
+  return card;
+}
+
+function coachCard(coach, review) {
+  const card = h('div', 'card coach');
+  if (review) {
+    const r = h('div', 'review');
+    const word = review.verdict === 'better' ? '良くなりました' : review.verdict === 'worse' ? '今回は悪くなりました' : 'ほぼ同じでした';
+    r.append(h('div', 'k', '前回の課題の結果'));
+    const line = h('div');
+    line.append(document.createTextNode(`「${review.title}」：${review.label} ${f1(review.before)}${review.unit} → ${f1(review.now)}${review.unit}　`), h('span', review.verdict === 'better' ? 'up' : review.verdict === 'worse' ? 'down' : null, word));
+    if (review.reached) line.append(h('span', 'best', '目標達成'));
+    r.append(line);
+    card.append(r);
+  }
+  if (coach.focus) {
+    card.append(h('div', 'k', '次はこうしてみよう'), h('div', 't', coach.focus.title), h('div', 'c', coach.focus.cue), h('div', 'w', coach.focus.why));
+  }
+  if (coach.also && coach.also.length) card.append(h('div', 'also', `ほかに気になった点：${coach.also.join('／')}。まずは上の1つだけに集中するのがおすすめです。`));
+  return card;
+}
+
+function scoreTrend(history) {
+  const past = pastScores(history);
+  const card = h('div', 'card');
+  card.append(h('h3', null, 'スコアの推移'));
+  if (past.n < 2) {
+    card.append(h('p', 'note', '2ラウンド以上保存すると、スコアの推移を表示します。'));
+    return card;
+  }
+  const W = 600, H = 180, L = 34, R = 12, T = 12, B = 24;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'スコアの推移' });
+  svg.style.width = '100%';
+  const X = (i) => L + (W - L - R) * (past.n === 1 ? 0.5 : i / (past.n - 1));
+  const Y = (v) => T + (H - T - B) * (1 - v / 100);
+  for (const v of [0, 50, 100]) {
+    svgEl('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: '#343b4b', 'stroke-width': 1 }, svg);
+    const t = svgEl('text', { x: L - 6, y: Y(v) + 4, 'font-size': 12, fill: '#969eac', 'text-anchor': 'end' }, svg);
+    t.textContent = v;
+  }
+  svgEl('polyline', { points: past.totals.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' '), fill: 'none', stroke: '#36d3c4', 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+  past.totals.forEach((v, i) => svgEl('circle', { cx: X(i), cy: Y(v), r: past.n > 40 ? 2 : 4, fill: '#36d3c4' }, svg));
+  const lab = svgEl('text', { x: W - R, y: H - 6, 'font-size': 12, fill: '#969eac', 'text-anchor': 'end' }, svg);
+  lab.textContent = `${past.n}ラウンド目`;
+  card.append(svg);
+  const recent = past.totals.slice(-5);
+  const rmean = recent.reduce((a, b) => a + b, 0) / recent.length;
+  card.append(h('p', 'note', `平均 ${Math.round(past.mean)}点・最高 ${Math.round(past.best)}点・直近${recent.length}ラウンドの平均 ${Math.round(rmean)}点`));
+  card.append(skillBars(Object.fromEntries(SKILLS.map((d) => [d.key, fin(past.avg[d.key]) ? Math.round(past.avg[d.key]) : null])), null));
+  card.append(h('p', 'note', '棒は項目ごとのこれまでの平均です。一番低い項目が、今の伸びしろです。'));
   return card;
 }
 
@@ -191,9 +303,11 @@ function keyframes(analysis, frames, view) {
 }
 
 export function renderResult(root, data) {
-  const { analysis, hits, findings, frames, view } = data;
+  const { analysis, hits, findings, frames, view, score, coach, review, history } = data;
   root.replaceChildren();
   const land = landingSummary(hits);
+  if (coach && (coach.focus || review)) root.append(coachCard(coach, review));
+  if (score) root.append(scoreCard(score, history || []));
   const cards = h('div', 'cards');
   cards.append(
     stat('着弾の中心', land ? offsetWords(land.cx, land.cy) : '—'),
@@ -203,7 +317,7 @@ export function renderResult(root, data) {
   );
   root.append(cards);
   const two = h('div', 'two');
-  const bc = boardCard('刺さった位置', hits);
+  const bc = boardCard('刺さった位置', hits, { fit: true });
   const list = h('ol', 'hit-list');
   list.style.marginTop = '10px';
   hits.forEach((x) => list.append(h('li', null, hitText(x))));
@@ -236,6 +350,7 @@ export function renderHistory(root, history, onClear) {
     stat('ブル中心からの平均距離', st.n ? `${f1(st.meanDist)}cm` : '—'),
   );
   root.append(cards);
+  if (history.length) root.append(scoreTrend(history));
   if (!history.length) {
     root.append(h('p', 'note', 'まだ保存されたラウンドがありません。解析結果の画面で「保存して次へ」を押すと、ここにたまっていきます。'));
     return;

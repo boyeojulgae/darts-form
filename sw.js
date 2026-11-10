@@ -1,6 +1,6 @@
 // Offline support. App files: network first (so updates arrive), cache as fallback.
 // Pose engine and model files are large and rarely change: cache first.
-const VERSION = 'v0.1.0';
+const VERSION = 'v0.2.0';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/main.js', 'js/pose.js', 'js/analysis.js', 'js/board.js', 'js/report.js', 'js/store.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

@@ -40,6 +40,18 @@ export function addSession(session) {
 export function clearHistory() {
   const d = read();
   d.sessions = [];
+  d.focus = null;
+  return write(d);
+}
+
+/** The one thing to work on in the next round (set when a round is saved). */
+export function loadFocus() {
+  return read().focus || null;
+}
+
+export function saveFocus(focus) {
+  const d = read();
+  d.focus = focus;
   return write(d);
 }
 

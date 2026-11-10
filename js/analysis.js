@@ -369,3 +369,190 @@ export function historyFindings(history) {
   }
   return out;
 }
+
+// ---------- scores and coaching ----------
+
+export const SKILLS = [
+  { key: 'landing', label: '着弾の正確さ', weight: 0.25, form: false },
+  { key: 'grouping', label: 'グルーピング', weight: 0.15, form: false },
+  { key: 'setup', label: '構えの再現性', weight: 0.15, form: true },
+  { key: 'still', label: '構えの静止', weight: 0.1, form: true },
+  { key: 'pull', label: '引きの真っ直ぐさ', weight: 0.15, form: true },
+  { key: 'swing', label: '振りの再現性', weight: 0.1, form: true },
+  { key: 'body', label: '体の安定', weight: 0.1, form: true },
+];
+
+export const gradeOf = (v) => (v >= 90 ? 'S' : v >= 80 ? 'A' : v >= 65 ? 'B' : v >= 50 ? 'C' : 'D');
+
+// piecewise-linear score curve through [value, score] points
+function curve(x, pts) {
+  if (!fin(x)) return null;
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (x <= pts[i][0]) {
+      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+const CONSIST = [[0.4, 100], [1, 82], [2, 52], [3, 28], [5, 0]];
+
+/** The raw quantities (cm) behind each skill, used for scores, coaching and round-to-round comparison. */
+export function roundFacts(analysis, hits) {
+  const T = analysis.throws;
+  const mv = (k) => T.map((t) => t.m[k]);
+  const all = hits.filter(Boolean);
+  const pos = all.filter((h) => !h.out);
+  const f = { throws: T.length, outs: all.length - pos.length };
+  f.meanDist = all.length ? mean(all.map((h) => (h.out ? 26 : Math.hypot(h.x, h.y) / 10))) : NaN;
+  f.spread = pos.length >= 2 ? Math.max(...pos.flatMap((a, i) => pos.slice(i + 1).map((b) => Math.hypot(a.x - b.x, a.y - b.y) / 10))) : NaN;
+  f.cx = pos.length ? mean(pos.map((h) => h.x)) / 10 : NaN;
+  f.cy = pos.length ? mean(pos.map((h) => h.y)) / 10 : NaN;
+  f.still = T.length ? Math.max(...mv('still')) : NaN;
+  f.pull = T.length ? mean(mv('preShift').map(Math.abs)) : NaN;
+  f.pullSigned = T.length ? mean(mv('preShift')) : NaN;
+  const multi = T.length >= 2;
+  f.setupX = multi ? range(mv('handX')) : NaN;
+  f.setupY = multi ? range(mv('handY')) : NaN;
+  f.riseRange = multi ? range(mv('rise')) : NaN;
+  f.swingRange = multi ? range(mv('swingShift')) : NaN;
+  f.bodyX = multi ? range(mv('bodyX')) : NaN;
+  f.bodyY = multi ? range(mv('bodyY')) : NaN;
+  return f;
+}
+
+export function scoreRound(analysis, hits) {
+  const f = roundFacts(analysis, hits);
+  const s = {};
+  s.landing = curve(f.meanDist, [[0.85, 100], [2.15, 92], [6, 68], [11, 42], [19.7, 10], [26, 0]]);
+  const g = curve(f.spread, [[0, 100], [3, 90], [8, 65], [15, 38], [30, 5], [40, 0]]);
+  s.grouping = g == null ? null : Math.max(0, g - 15 * f.outs);
+  s.still = curve(f.still, [[0.8, 100], [2, 82], [3, 62], [5, 35], [9, 0]]);
+  s.pull = curve(f.pull, [[0.8, 100], [2, 78], [3, 58], [5, 28], [8, 0]]);
+  s.setup = curve(Math.max(f.setupX / 2, f.setupY / 3), CONSIST);
+  s.swing = curve(Math.max(f.riseRange / 3, f.swingRange / 2.5), CONSIST);
+  s.body = curve(Math.max(f.bodyX / 2.5, f.bodyY / 3), CONSIST);
+  let sum = 0, wsum = 0;
+  for (const def of SKILLS) {
+    if (s[def.key] == null) continue;
+    s[def.key] = Math.round(s[def.key]);
+    sum += s[def.key] * def.weight;
+    wsum += def.weight;
+  }
+  const total = wsum > 0 ? Math.round(sum / wsum) : null;
+  return { total, grade: total == null ? null : gradeOf(total), skills: s };
+}
+
+const FOCUS_PRIORITY = { pull: 1.2, still: 1.1, setup: 1.0, body: 0.9, swing: 0.8 };
+
+function focusFor(key, f) {
+  const side = f.pullSigned >= 0 ? '右目側' : '左目側';
+  switch (key) {
+    case 'pull':
+      return {
+        key, metric: 'pull', label: '引く時の横移動', value: f.pull, target: 2, better: 'lower',
+        title: '引く時に手を横へ動かさない',
+        cue: `こぶしが${side}へ流れないよう、構えた位置のまま真後ろ（口の方向）へ引いてみてください。`,
+        why: `今回は引く時に平均${r1(f.pull)}cm、${side}へ動いていました。目標は2cm未満です。`,
+      };
+    case 'still':
+      return {
+        key, metric: 'still', label: '投げる前の手の揺れ', value: f.still, target: 2, better: 'lower',
+        title: '構えたら止まってから投げる',
+        cue: '構えたら心の中で「1、2」と数えて、手が止まってから引き始めてみてください。',
+        why: `今回は振り出す前の0.5秒で、手が最大${r1(f.still)}cm動いていました。目標は2cm未満です。`,
+      };
+    case 'setup': {
+      const lateral = f.setupX / 2 >= f.setupY / 3;
+      return {
+        key, metric: lateral ? 'setupX' : 'setupY', label: lateral ? '構えの左右のずれ' : '構えの高さのずれ', value: lateral ? f.setupX : f.setupY, target: lateral ? 1.5 : 2.5, better: 'lower',
+        title: '毎回同じ場所に構える',
+        cue: lateral
+          ? '構える時の目印を1つ決めて（例：ダーツの先を鼻筋に重ねる）、3投とも同じ目印に合わせてから止まってみてください。'
+          : '構える高さの目印を1つ決めて（例：こぶしの上端を目の高さに合わせる）、3投とも同じ高さにしてから止まってみてください。',
+        why: `今回は構えの手の位置が、投げるごとに左右${r1(f.setupX)}cm・高さ${r1(f.setupY)}cm違いました。`,
+      };
+    }
+    case 'body': {
+      const lateral = f.bodyX / 2.5 >= f.bodyY / 3;
+      return {
+        key, metric: lateral ? 'bodyX' : 'bodyY', label: lateral ? '体の左右のずれ' : '体の高さのずれ', value: lateral ? f.bodyX : f.bodyY, target: 2, better: 'lower',
+        title: '1投ごとに立ち直す',
+        cue: '次のダーツを持ったら、足の位置と前傾を確かめてから構えてみてください。投げた後に流れた体を、毎回元の姿勢へ戻します。',
+        why: `今回は肩の位置が、投げるごとに左右${r1(f.bodyX)}cm・高さ${r1(f.bodyY)}cm違いました。`,
+      };
+    }
+    case 'swing':
+      return {
+        key, metric: 'riseRange', label: '手の上がり幅のばらつき', value: f.riseRange, target: 3, better: 'lower',
+        title: '投げ終わりの形を揃える',
+        cue: '投げ終わりで腕を伸ばしたまま1秒止めて、毎回同じ高さ・同じ向きで終わることを意識してみてください。',
+        why: `今回は手の上がり幅が、投げるごとに${r1(f.riseRange)}cm違いました。`,
+      };
+    default:
+      return null;
+  }
+}
+
+/** Picks one thing to try next round, plus up to two secondary notes. */
+export function coachRound(analysis, hits, score) {
+  const f = roundFacts(analysis, hits);
+  if (!f.throws) return { focus: null, also: [] };
+  const weak = SKILLS.filter((d) => d.form && score.skills[d.key] != null && score.skills[d.key] < 80)
+    .map((d) => ({ key: d.key, need: (80 - score.skills[d.key]) * FOCUS_PRIORITY[d.key] }))
+    .sort((a, b) => b.need - a.need);
+  let focus = null;
+  const also = [];
+  if (weak.length) {
+    focus = focusFor(weak[0].key, f);
+    for (const w of weak.slice(1, 3)) {
+      const o = focusFor(w.key, f);
+      if (o && score.skills[w.key] < 65) also.push(`${o.title}（${o.label} ${r1(o.value)}cm）`);
+    }
+  } else {
+    const off = Math.hypot(f.cx, f.cy);
+    if (fin(f.spread) && f.spread <= 6 && off >= 3) {
+      const opp = [];
+      if (Math.abs(f.cx) >= 1.5) opp.push(`${f.cx > 0 ? '左' : '右'}へ${r1(Math.abs(f.cx))}cm`);
+      if (Math.abs(f.cy) >= 1.5) opp.push(`${f.cy > 0 ? '下' : '上'}へ${r1(Math.abs(f.cy))}cm`);
+      focus = {
+        key: 'aim', metric: 'offset', label: 'グループ中心のずれ', value: off, target: 2.2, better: 'lower',
+        title: 'フォームはそのまま、狙いだけずらす',
+        cue: `3本はまとまっています。次は狙う点を${opp.join('・')}ずらして投げてみてください。動きは変えません。`,
+        why: `今回のグループは${dirWords(f.cx, f.cy)}にまとまっていました（まとまり${r1(f.spread)}cm）。動きの数値は揃っているので、狙いの修正が近道です。`,
+      };
+    } else if (fin(f.spread) && f.spread > 8) {
+      focus = {
+        key: 'release', metric: 'spread', label: '3本のまとまり', value: f.spread, target: 6, better: 'lower',
+        title: '指の離れ方を揃える',
+        cue: 'カメラで測れる動きは揃っています。次は3投とも同じ指の形で離すことだけに集中して、投げ終わりの手の形を見てみてください。',
+        why: `今回は動きの数値が揃っているのに、着弾は${r1(f.spread)}cm散りました。グリップやリリースなど、このカメラでは見えない部分の可能性があります。`,
+      };
+    } else {
+      focus = {
+        key: 'keep', metric: 'total', label: '総合スコア', value: score.total, target: score.total, better: 'higher',
+        title: '今の形をそのまま続ける',
+        cue: '直すところは見当たりません。同じ感覚でもう1ラウンド投げて、再現できるか確かめてみてください。',
+        why: '動きも着弾も揃っていました。',
+      };
+    }
+  }
+  if (focus) for (const k of ['value', 'target']) focus[k] = Math.round(focus[k] * 10) / 10;
+  return { focus, also };
+}
+
+/** How the previous round's focus went this time. */
+export function reviewFocus(prev, analysis, hits, score) {
+  if (!prev || !analysis.throws.length) return null;
+  const f = roundFacts(analysis, hits);
+  const now = prev.metric === 'total' ? score.total : prev.metric === 'offset' ? Math.hypot(f.cx, f.cy) : f[prev.metric];
+  if (!fin(now) || !fin(prev.value)) return null;
+  const lower = prev.better !== 'higher';
+  const gain = lower ? prev.value - now : now - prev.value;
+  const need = Math.max(0.5, Math.abs(prev.value) * 0.15);
+  const verdict = gain >= need ? 'better' : gain <= -need ? 'worse' : 'same';
+  const reached = prev.metric !== 'total' && (lower ? now <= prev.target : now >= prev.target);
+  return { title: prev.title, label: prev.label, before: prev.value, now: Math.round(now * 10) / 10, unit: prev.metric === 'total' ? '点' : 'cm', verdict, reached };
+}
