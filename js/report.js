@@ -127,7 +127,8 @@ function coachCard(coach, review) {
     const word = review.verdict === 'better' ? '良くなりました' : review.verdict === 'worse' ? '今回は悪くなりました' : 'ほぼ同じでした';
     r.append(h('div', 'k', '前回の課題の結果'));
     const line = h('div');
-    line.append(document.createTextNode(`「${review.title}」：${review.label} ${f1(review.before)}${review.unit} → ${f1(review.now)}${review.unit}　`), h('span', review.verdict === 'better' ? 'up' : review.verdict === 'worse' ? 'down' : null, word));
+    const fmt = (v) => (review.unit === '点' ? String(Math.round(v)) : f1(v));
+    line.append(document.createTextNode(`「${review.title}」：${review.label} ${fmt(review.before)}${review.unit} → ${fmt(review.now)}${review.unit}　`), h('span', review.verdict === 'better' ? 'up' : review.verdict === 'worse' ? 'down' : null, word));
     if (review.reached) line.append(h('span', 'best', '目標達成'));
     r.append(line);
     card.append(r);
